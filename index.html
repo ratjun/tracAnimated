@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaflet 地图轨迹动画</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            height: 100vh;
+        }
+        #map {
+            height: 80%;
+            width: 80%;
+            margin: 20px 0;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            padding: 10px;
+            background-color: #fff;
+            border-top: 1px solid #ccc;
+            box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
+        }
+        #controls button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            background-color: #007bff;
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #controls button:hover {
+            background-color: #0056b3;
+        }
+        #controls label {
+            margin: 0 10px;
+            font-size: 14px;
+        }
+        #controls input[type="range"] {
+            width: 200px;
+            margin: 0 10px;
+        }
+        #controls select {
+            margin: 0 10px;
+            padding: 5px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #speedValue {
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .custom-marker {
+            animation: bounce 1s infinite;
+        }
+        .animated-marker {
+            z-index: 1000;
+        }
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <button id="startDrawing">开始绘制</button>
+        <button id="playAnimation">播放动画</button>
+        <label for="speedControl">速度:</label>
+        <input type="range" id="speedControl" min="1" max="100" value="50">
+        <span id="speedValue">50</span>
+        <label for="markerSelect">选择标记:</label>
+        <select id="markerSelect">
+            <option value="default">默认</option>
+            <option value="circle">圆形</option>
+            <option value="star">星形</option>
+            <option value="heart">心形</option>
+        </select>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        // Define SVG markers
+        var svgMarkers = {
+            default: L.icon({
+                iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
+                shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+                shadowSize: [41, 41]
+            }),
+            circle: L.divIcon({
+                className: 'custom-marker',
+                html: '<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="blue" /></svg>',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            }),
+            star: L.divIcon({
+                className: 'custom-marker',
+                html: '<svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,2 15,10 22,10 17,14 19,22 12,18 5,22 7,14 2,10 9,10" fill="yellow" /></svg>',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            }),
+            heart: L.divIcon({
+                className: 'custom-marker',
+                html: '<svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41 0.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="red" /></svg>',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            })
+        };
+
+        // Define AnimatedMarker class
+        L.AnimatedMarker = L.Marker.extend({
+            options: {
+                // meters per second
+                speed: 20000,
+                // milliseconds
+                interval: 1000,
+                // animate on add?
+                autoStart: true,
+                // callback onend
+                onEnd: function() {},
+                distance: 200
+            },
+
+            initialize: function(latlngs, options) {
+                this.setLine(latlngs);
+                L.Marker.prototype.initialize.call(this, latlngs[0], options);
+            },
+
+            setLine: function(latlngs) {
+                this._latlngs = latlngs;
+                this._index = 0;
+                this._speed = this.options.speed;
+                this._distance = this.options.distance;
+                this._lastPosition = this._latlngs[0];
+                this._currentPosition = this._latlngs[0];
+            },
+
+            // Start the animation
+            start: function() {
+                this._startTime = Date.now();
+                this.animate();
+            },
+
+            animate: function() {
+                var self = this;
+                var now = Date.now();
+                var elapsed = now - this._startTime;
+                
+                // Calculate progress based on speed and elapsed time
+                var progress = (elapsed * this._speed) / this._distance;
+                
+                if (this._index < this._latlngs.length - 1) {
+                    var start = this._latlngs[this._index];
+                    var end = this._latlngs[this._index + 1];
+                    
+                    // Interpolate between points
+                    var lat = start.lat + (end.lat - start.lat) * progress;
+                    var lng = start.lng + (end.lng - start.lng) * progress;
+                    
+                    this.setLatLng([lat, lng]);
+                    
+                    if (progress >= 1) {
+                        this._index++;
+                        if (this._index === this._latlngs.length - 1) {
+                            this.options.onEnd();
+                            return;
+                        }
+                        this._startTime = now;
+                    }
+                    
+                    requestAnimationFrame(function() {
+                        self.animate();
+                    });
+                }
+            }
+        });
+
+        // AnimatedMarker factory
+        L.animatedMarker = function(latlngs, options) {
+            return new L.AnimatedMarker(latlngs, options);
+        };
+
+        var map = L.map('map').setView([22.5431, 114.0579], 13); // 初始化地图，默认中心点改为深圳
+
+        // 添加 OpenStreetMap 图层
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // 存储标记点数组
+        var markers = [];
+        // 存储轨迹线数组
+        var polylines = [];
+        // 动画播放状态
+        var isAnimating = false;
+
+        // 添加绘制状态控制
+        var isDrawingEnabled = false;
+
+        var animatedMarker;
+        var animatedPolyline;
+
+        // 修改地图点击事件监听器
+        map.on('click', function(e) {
+            if (isDrawingEnabled && !isAnimating) {
+                // 获取点击位置的经纬度
+                var latlng = e.latlng;
+                // 添加标记点
+                var marker = L.marker(latlng).addTo(map);
+                markers.push(marker);
+
+                // 如果有多个标记点，绘制轨迹线
+                if (markers.length > 1) {
+                    var latlngs = markers.map(function(marker) {
+                        return marker.getLatLng();
+                    });
+                    var polyline = L.polyline(latlngs, {color: 'red'}).addTo(map);
+                    polylines.push(polyline);
+                }
+            }
+        });
+
+        // 更新开始绘制按钮事件监听器
+        document.getElementById('startDrawing').addEventListener('click', function() {
+            isAnimating = false;
+            isDrawingEnabled = true;
+            // 清除所有标记和轨迹线
+            markers.forEach(function(marker) { map.removeLayer(marker); });
+            polylines.forEach(function(polyline) { map.removeLayer(polyline); });
+            markers = [];
+            polylines = [];
+            // 清除动画标记和轨迹线
+            if (animatedMarker) {
+                map.removeLayer(animatedMarker);
+                animatedMarker = null;
+            }
+            if (animatedPolyline) {
+                map.removeLayer(animatedPolyline);
+                animatedPolyline = null;
+            }
+            this.textContent = '绘制中...';  // 更新按钮文字
+        });
+
+        // 更新速度控制滑块事件监听器
+        document.getElementById('speedControl').addEventListener('input', function() {
+            document.getElementById('speedValue').textContent = this.value;
+        });
+
+        // 计算角度
+        function calculateAngle(start, end) {
+            var dx = end.lng - start.lng;
+            var dy = end.lat - start.lat;
+            var angle = Math.atan2(dy, dx) * (180 / Math.PI);
+            return angle;
+        }
+
+        // 动画函数
+        function animateMarkers() {
+            // Hide original markers and polylines
+            markers.forEach(function(marker) { map.removeLayer(marker); });
+            polylines.forEach(function(polyline) { map.removeLayer(polyline); });
+
+            if (markers.length > 1) {
+                var points = markers.map(function(marker) {
+                    return marker.getLatLng();
+                });
+
+                var selectedMarker = document.getElementById('markerSelect').value;
+                animatedMarker = L.marker(points[0], {icon: svgMarkers[selectedMarker], className: 'animated-marker'}).addTo(map);
+                animatedPolyline = L.polyline([points[0]], {color: 'blue'}).addTo(map);
+                var i = 1;
+
+                function moveMarker() {
+                    if (i < points.length) {
+                        var start = points[i - 1];
+                        var end = points[i];
+                        var distance = start.distanceTo(end);
+                        var zoom = map.getZoom();
+                        var speedControl = document.getElementById('speedControl').value;
+                        var duration = distance / (speedControl * Math.pow(2, 13 - zoom)); // Adjust speed based on zoom level and slider value
+                        var startTime = performance.now();
+                        var angle = calculateAngle(start, end);
+
+                        function animate() {
+                            var now = performance.now();
+                            var progress = (now - startTime) / duration;
+                            if (progress < 1) {
+                                var lat = start.lat + (end.lat - start.lat) * progress;
+                                var lng = start.lng + (end.lng - start.lng) * progress;
+                                animatedMarker.setLatLng([lat, lng]);
+                                animatedMarker._icon.style.transform = 'rotate(' + angle + 'deg)';
+                                animatedMarker._icon.style.transformOrigin = 'center';
+                                animatedPolyline.addLatLng([lat, lng]);
+                                requestAnimationFrame(animate);
+                            } else {
+                                animatedMarker.setLatLng(end);
+                                animatedPolyline.addLatLng(end);
+                                i++;
+                                if (i < points.length) {
+                                    moveMarker();
+                                } else {
+                                    isAnimating = false;
+                                }
+                            }
+                        }
+
+                        animate();
+                    }
+                }
+
+                moveMarker();
+                map.fitBounds(L.latLngBounds(points));
+            }
+        }
+
+        // 更新播放动画按钮事件监听器
+        document.getElementById('playAnimation').addEventListener('click', function() {
+            if (markers.length > 1 && !isAnimating) {
+                // 清除所有标记和轨迹线
+                markers.forEach(function(marker) { map.removeLayer(marker); });
+                polylines.forEach(function(polyline) { map.removeLayer(polyline); });
+                // 清除动画标记和轨迹线
+                if (animatedMarker) {
+                    map.removeLayer(animatedMarker);
+                    animatedMarker = null;
+                }
+                if (animatedPolyline) {
+                    map.removeLayer(animatedPolyline);
+                    animatedPolyline = null;
+                }
+                isDrawingEnabled = false; // 禁用绘制
+                isAnimating = true;
+                document.getElementById('startDrawing').textContent = '开始绘制'; // 重置按钮文字
+                animateMarkers();
+            }
+        });
+    </script>
+</body>
+</html>
